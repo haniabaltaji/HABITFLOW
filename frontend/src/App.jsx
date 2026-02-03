@@ -574,8 +574,14 @@ function TaskCheckinCard({ task, checkin, onSave }) {
   }, [checkin])
 
   const handleSave = (newValue, newCompleted) => {
-    const score = newCompleted ? 10 : (newValue ? 5 : 0)
-    onSave(typeof newValue === 'object' ? JSON.stringify(newValue) : String(newValue), newCompleted, score)
+    // Calculate score based on task type and completion
+    let score = 0
+    if (newCompleted) {
+      score = 10 // Full completion
+    } else if (newValue && newValue !== '' && newValue !== '[]' && newValue !== '{}') {
+      score = 5 // Partial (has value but not complete)
+    }
+    onSave(typeof newValue === 'object' ? JSON.stringify(newValue) : String(newValue || ''), newCompleted, score)
   }
 
   const renderInput = () => {
@@ -625,9 +631,10 @@ function TaskCheckinCard({ task, checkin, onSave }) {
         )
       
       case 'mcq':
+        const mcqOptions = config.options && config.options.length > 0 ? config.options : ['Option 1', 'Option 2', 'Option 3']
         return (
           <div className="mcq-options">
-            {(config.options || ['Option 1', 'Option 2']).map((opt, i) => (
+            {mcqOptions.filter(opt => opt.trim()).map((opt, i) => (
               <div key={i} className={`mcq-option ${value === opt ? 'selected' : ''}`} onClick={() => { setValue(opt); handleSave(opt, true) }}>
                 {opt}
               </div>
@@ -636,10 +643,11 @@ function TaskCheckinCard({ task, checkin, onSave }) {
         )
       
       case 'dropdown':
+        const dropdownOptions = config.options && config.options.length > 0 ? config.options : ['Option 1', 'Option 2', 'Option 3']
         return (
           <select className="form-input" value={value} onChange={e => { setValue(e.target.value); handleSave(e.target.value, !!e.target.value) }}>
             <option value="">Select...</option>
-            {(config.options || ['Option 1', 'Option 2']).map((opt, i) => (
+            {dropdownOptions.filter(opt => opt.trim()).map((opt, i) => (
               <option key={i} value={opt}>{opt}</option>
             ))}
           </select>
@@ -658,29 +666,71 @@ function TaskCheckinCard({ task, checkin, onSave }) {
         )
       
       case 'workout':
-        const sets = value ? (typeof value === 'string' ? JSON.parse(value) : value) : []
-        const addSet = () => {
-          const newSets = [...sets, { reps: '', weight: '' }]
-          setValue(JSON.stringify(newSets))
+        const workoutData = value ? (typeof value === 'string' ? JSON.parse(value) : value) : { title: '', exercises: [] }
+        const updateWorkout = (newData) => {
+          setValue(JSON.stringify(newData))
+          const hasContent = newData.title || newData.exercises.some(ex => ex.name || ex.sets.some(s => s.reps))
+          handleSave(newData, hasContent)
         }
-        const updateSet = (idx, field, val) => {
-          const newSets = [...sets]
-          newSets[idx] = { ...newSets[idx], [field]: val }
-          setValue(JSON.stringify(newSets))
-          handleSave(newSets, newSets.length > 0 && newSets.some(s => s.reps))
+        const addExercise = () => {
+          const newData = { ...workoutData, exercises: [...workoutData.exercises, { name: '', sets: [{ reps: '', weight: '' }] }] }
+          updateWorkout(newData)
+        }
+        const updateExerciseName = (exIdx, name) => {
+          const newData = { ...workoutData }
+          newData.exercises[exIdx].name = name
+          updateWorkout(newData)
+        }
+        const addSetToExercise = (exIdx) => {
+          const newData = { ...workoutData }
+          newData.exercises[exIdx].sets.push({ reps: '', weight: '' })
+          updateWorkout(newData)
+        }
+        const updateSetInExercise = (exIdx, setIdx, field, val) => {
+          const newData = { ...workoutData }
+          newData.exercises[exIdx].sets[setIdx][field] = val
+          updateWorkout(newData)
+        }
+        const removeExercise = (exIdx) => {
+          const newData = { ...workoutData, exercises: workoutData.exercises.filter((_, i) => i !== exIdx) }
+          updateWorkout(newData)
         }
         return (
-          <div className="workout-sets">
-            {sets.map((set, i) => (
-              <div key={i} className="workout-set">
-                <span>Set {i + 1}:</span>
-                <input type="number" className="form-input" placeholder="Reps" value={set.reps} onChange={e => updateSet(i, 'reps', e.target.value)} />
-                <span>×</span>
-                <input type="number" className="form-input" placeholder="Weight" value={set.weight} onChange={e => updateSet(i, 'weight', e.target.value)} />
-                <span>lbs</span>
+          <div className="workout-log">
+            <input 
+              type="text" 
+              className="form-input workout-title" 
+              placeholder="Workout Title (e.g., Push Day, Leg Day)" 
+              value={workoutData.title || ''} 
+              onChange={e => updateWorkout({ ...workoutData, title: e.target.value })}
+              style={{ marginBottom: 12, fontWeight: 600 }}
+            />
+            {workoutData.exercises.map((exercise, exIdx) => (
+              <div key={exIdx} className="exercise-block" style={{ background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 8, marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Exercise name (e.g., Bench Press)" 
+                    value={exercise.name} 
+                    onChange={e => updateExerciseName(exIdx, e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button className="btn btn-outline btn-sm" onClick={() => removeExercise(exIdx)} style={{ color: '#ef4444', borderColor: '#ef4444' }}>✕</button>
+                </div>
+                {exercise.sets.map((set, setIdx) => (
+                  <div key={setIdx} className="workout-set" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: '#8888a0', width: 45 }}>Set {setIdx + 1}:</span>
+                    <input type="number" className="form-input" placeholder="Reps" value={set.reps} onChange={e => updateSetInExercise(exIdx, setIdx, 'reps', e.target.value)} style={{ width: 70 }} />
+                    <span style={{ color: '#8888a0' }}>×</span>
+                    <input type="number" className="form-input" placeholder="lbs" value={set.weight} onChange={e => updateSetInExercise(exIdx, setIdx, 'weight', e.target.value)} style={{ width: 70 }} />
+                    <span style={{ fontSize: 12, color: '#8888a0' }}>lbs</span>
+                  </div>
+                ))}
+                <button className="btn btn-outline btn-sm" onClick={() => addSetToExercise(exIdx)} style={{ marginTop: 4, fontSize: 11 }}>+ Add Set</button>
               </div>
             ))}
-            <button className="btn btn-outline btn-sm add-set-btn" onClick={addSet}>+ Add Set</button>
+            <button className="btn btn-primary btn-sm" onClick={addExercise} style={{ marginTop: 8 }}>+ Add Exercise</button>
           </div>
         )
       
@@ -797,11 +847,13 @@ function TaskModal({ task, onClose, onSave }) {
               <label className="form-label">Options (one per line)</label>
               <textarea
                 className="form-input"
-                value={(form.config.options || []).join('\n')}
-                onChange={e => setForm({ ...form, config: { ...form.config, options: e.target.value.split('\n').filter(o => o.trim()) } })}
-                placeholder="Option 1&#10;Option 2&#10;Option 3"
-                rows={4}
+                value={(form.config.options || ['Option 1', 'Option 2', 'Option 3']).join('\n')}
+                onChange={e => setForm({ ...form, config: { ...form.config, options: e.target.value.split('\n') } })}
+                placeholder="Enter each option on a new line:&#10;Option 1&#10;Option 2&#10;Option 3"
+                rows={5}
+                style={{ resize: 'vertical' }}
               />
+              <small style={{ color: '#8888a0', fontSize: 12 }}>Press Enter to add each option on a new line</small>
             </div>
           )}
 
