@@ -227,86 +227,64 @@ app.post('/api/checkins', authenticate, (req, res) => {
 // LEADERBOARD ROUTE
 app.get('/api/leaderboard', authenticate, (req, res) => {
   const { period } = req.query;
+  const currentUserId = req.user.id;
   
-  // Build the query with proper date filtering
-  let query;
+  console.log('Leaderboard request - Period:', period, 'User ID:', currentUserId);
   
+  // Build date filter
+  let dateFilter = '';
   if (period === 'week') {
-    query = `
-      SELECT 
-        u.id,
-        u.username,
-        COUNT(CASE WHEN c.completed = 1 THEN 1 END) as completed_tasks,
-        COUNT(c.id) as total_checkins,
-        COALESCE(ROUND(AVG(c.score), 1), 0) as avg_score,
-        COALESCE(SUM(c.score), 0) as total_score
-      FROM users u
-      LEFT JOIN checkins c ON u.id = c.user_id AND c.date >= date('now', '-7 days')
-      GROUP BY u.id, u.username
-      ORDER BY total_score DESC, completed_tasks DESC
-      LIMIT 50
-    `;
+    dateFilter = "AND c.date >= date('now', '-7 days')";
   } else if (period === 'month') {
-    query = `
-      SELECT 
-        u.id,
-        u.username,
-        COUNT(CASE WHEN c.completed = 1 THEN 1 END) as completed_tasks,
-        COUNT(c.id) as total_checkins,
-        COALESCE(ROUND(AVG(c.score), 1), 0) as avg_score,
-        COALESCE(SUM(c.score), 0) as total_score
-      FROM users u
-      LEFT JOIN checkins c ON u.id = c.user_id AND c.date >= date('now', '-30 days')
-      GROUP BY u.id, u.username
-      ORDER BY total_score DESC, completed_tasks DESC
-      LIMIT 50
-    `;
-  } else {
-    // All time
-    query = `
-      SELECT 
-        u.id,
-        u.username,
-        COUNT(CASE WHEN c.completed = 1 THEN 1 END) as completed_tasks,
-        COUNT(c.id) as total_checkins,
-        COALESCE(ROUND(AVG(c.score), 1), 0) as avg_score,
-        COALESCE(SUM(c.score), 0) as total_score
-      FROM users u
-      LEFT JOIN checkins c ON u.id = c.user_id
-      GROUP BY u.id, u.username
-      ORDER BY total_score DESC, completed_tasks DESC
-      LIMIT 50
-    `;
+    dateFilter = "AND c.date >= date('now', '-30 days')";
   }
   
-  const leaderboard = runQuery(query);
+  // Get all users first
+  const users = runQuery('SELECT id, username FROM users');
+  console.log('Found users:', users);
   
-  // Filter out users with no activity, but ALWAYS include current user
-  // Use == for comparison to handle string/number type differences from JWT
-  const currentUserId = req.user.id;
+  // Build leaderboard with scores for each user
+  const leaderboard = users.map(user => {
+    const statsQuery = `
+      SELECT 
+        COUNT(CASE WHEN completed = 1 THEN 1 END) as completed_tasks,
+        COUNT(*) as total_checkins,
+        COALESCE(ROUND(AVG(score), 1), 0) as avg_score,
+        COALESCE(SUM(score), 0) as total_score
+      FROM checkins c
+      WHERE c.user_id = ? ${dateFilter}
+    `;
+    
+    const stats = runQuery(statsQuery, [user.id])[0] || {};
+    console.log('Stats for user', user.username, ':', stats);
+    
+    return {
+      id: user.id,
+      username: user.username,
+      completed_tasks: stats.completed_tasks || 0,
+      total_checkins: stats.total_checkins || 0,
+      avg_score: stats.avg_score || 0,
+      total_score: stats.total_score || 0
+    };
+  });
+  
+  // Sort by total_score descending
+  leaderboard.sort((a, b) => b.total_score - a.total_score || b.completed_tasks - a.completed_tasks);
+  
+  // Filter: keep users with activity OR the current user (always show yourself)
   const result = leaderboard.filter(player => 
-    player.total_score > 0 || player.completed_tasks > 0 || player.total_checkins > 0 || player.id == currentUserId
+    player.total_score > 0 || 
+    player.completed_tasks > 0 || 
+    player.id == currentUserId
   );
   
-  // If current user still not in list (edge case), add them with zeroes
-  const userInList = result.some(p => p.id == currentUserId);
-  if (!userInList) {
-    const currentUser = leaderboard.find(p => p.id == currentUserId);
-    if (currentUser) {
-      result.push(currentUser);
-    } else {
-      // User not even in query results - add minimal entry
-      const userInfo = runQuery('SELECT id, username FROM users WHERE id = ?', [currentUserId]);
-      if (userInfo.length > 0) {
-        result.push({
-          id: userInfo[0].id,
-          username: userInfo[0].username,
-          completed_tasks: 0,
-          total_checkins: 0,
-          avg_score: 0,
-          total_score: 0
-        });
-      }
+  console.log('Final leaderboard result:', result);
+  
+  // Safety net: if result is empty but we have a current user, add them
+  if (result.length === 0) {
+    const currentUserData = leaderboard.find(p => p.id == currentUserId);
+    if (currentUserData) {
+      result.push(currentUserData);
     }
   }
   
