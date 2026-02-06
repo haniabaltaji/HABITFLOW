@@ -228,49 +228,66 @@ app.post('/api/checkins', authenticate, (req, res) => {
 app.get('/api/leaderboard', authenticate, (req, res) => {
   const { period } = req.query;
   
-  let dateFilter = '';
+  // Build the query with proper date filtering
+  let query;
+  
   if (period === 'week') {
-    dateFilter = "WHERE c.date >= date('now', '-7 days')";
+    query = `
+      SELECT 
+        u.id,
+        u.username,
+        COUNT(CASE WHEN c.completed = 1 THEN 1 END) as completed_tasks,
+        COUNT(c.id) as total_checkins,
+        COALESCE(ROUND(AVG(c.score), 1), 0) as avg_score,
+        COALESCE(SUM(c.score), 0) as total_score
+      FROM users u
+      LEFT JOIN checkins c ON u.id = c.user_id AND c.date >= date('now', '-7 days')
+      GROUP BY u.id, u.username
+      ORDER BY total_score DESC, completed_tasks DESC
+      LIMIT 50
+    `;
   } else if (period === 'month') {
-    dateFilter = "WHERE c.date >= date('now', '-30 days')";
+    query = `
+      SELECT 
+        u.id,
+        u.username,
+        COUNT(CASE WHEN c.completed = 1 THEN 1 END) as completed_tasks,
+        COUNT(c.id) as total_checkins,
+        COALESCE(ROUND(AVG(c.score), 1), 0) as avg_score,
+        COALESCE(SUM(c.score), 0) as total_score
+      FROM users u
+      LEFT JOIN checkins c ON u.id = c.user_id AND c.date >= date('now', '-30 days')
+      GROUP BY u.id, u.username
+      ORDER BY total_score DESC, completed_tasks DESC
+      LIMIT 50
+    `;
+  } else {
+    // All time
+    query = `
+      SELECT 
+        u.id,
+        u.username,
+        COUNT(CASE WHEN c.completed = 1 THEN 1 END) as completed_tasks,
+        COUNT(c.id) as total_checkins,
+        COALESCE(ROUND(AVG(c.score), 1), 0) as avg_score,
+        COALESCE(SUM(c.score), 0) as total_score
+      FROM users u
+      LEFT JOIN checkins c ON u.id = c.user_id
+      GROUP BY u.id, u.username
+      ORDER BY total_score DESC, completed_tasks DESC
+      LIMIT 50
+    `;
   }
   
-  // First get all users, then get their scores
-  const users = runQuery('SELECT id, username FROM users');
+  const leaderboard = runQuery(query);
   
-  const leaderboard = users.map(user => {
-    let scoreQuery = `
-      SELECT 
-        COUNT(CASE WHEN completed = 1 THEN 1 END) as completed_tasks,
-        COUNT(*) as total_checkins,
-        COALESCE(ROUND(AVG(score), 1), 0) as avg_score,
-        COALESCE(SUM(score), 0) as total_score
-      FROM checkins c
-      WHERE c.user_id = ?
-    `;
-    
-    if (period === 'week') {
-      scoreQuery += " AND c.date >= date('now', '-7 days')";
-    } else if (period === 'month') {
-      scoreQuery += " AND c.date >= date('now', '-30 days')";
-    }
-    
-    const stats = runQuery(scoreQuery, [user.id])[0] || {};
-    
-    return {
-      id: user.id,
-      username: user.username,
-      completed_tasks: stats.completed_tasks || 0,
-      total_checkins: stats.total_checkins || 0,
-      avg_score: stats.avg_score || 0,
-      total_score: stats.total_score || 0
-    };
-  });
+  // Filter out users with no activity, but always include current user
+  const currentUserId = req.user.id;
+  const result = leaderboard.filter(player => 
+    player.total_score > 0 || player.completed_tasks > 0 || player.id === currentUserId
+  );
   
-  // Sort by total_score descending
-  leaderboard.sort((a, b) => b.total_score - a.total_score || b.completed_tasks - a.completed_tasks);
-  
-  res.json(leaderboard.slice(0, 50));
+  res.json(result);
 });
 
 // CHALLENGES ROUTES

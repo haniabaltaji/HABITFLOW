@@ -96,9 +96,15 @@ function App() {
   }
 
   const fetchLeaderboard = async () => {
-    const res = await fetch(`${API_URL}/leaderboard?period=${leaderboardPeriod}`, { headers: authHeaders })
-    const data = await res.json()
-    setLeaderboard(data)
+    try {
+      const res = await fetch(`${API_URL}/leaderboard?period=${leaderboardPeriod}`, { headers: authHeaders })
+      if (!res.ok) throw new Error('Failed to fetch leaderboard')
+      const data = await res.json()
+      setLeaderboard(data)
+    } catch (e) {
+      console.error('Leaderboard error:', e)
+      setLeaderboard([])
+    }
   }
 
   const fetchChallenges = async () => {
@@ -483,8 +489,8 @@ function App() {
                         </td>
                         <td>
                           <div className="player-info">
-                            <div className="player-avatar">{player.username[0].toUpperCase()}</div>
-                            <span>{player.username} {player.id === user?.id && '(You)'}</span>
+                            <div className="player-avatar">{player.username?.[0]?.toUpperCase() || '?'}</div>
+                            <span>{player.username || 'Unknown'} {player.id === user?.id && '(You)'}</span>
                           </div>
                         </td>
                         <td>{player.completed_tasks || 0}</td>
