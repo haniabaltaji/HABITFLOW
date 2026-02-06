@@ -281,11 +281,34 @@ app.get('/api/leaderboard', authenticate, (req, res) => {
   
   const leaderboard = runQuery(query);
   
-  // Filter out users with no activity, but always include current user
+  // Filter out users with no activity, but ALWAYS include current user
+  // Use == for comparison to handle string/number type differences from JWT
   const currentUserId = req.user.id;
   const result = leaderboard.filter(player => 
-    player.total_score > 0 || player.completed_tasks > 0 || player.id === currentUserId
+    player.total_score > 0 || player.completed_tasks > 0 || player.total_checkins > 0 || player.id == currentUserId
   );
+  
+  // If current user still not in list (edge case), add them with zeroes
+  const userInList = result.some(p => p.id == currentUserId);
+  if (!userInList) {
+    const currentUser = leaderboard.find(p => p.id == currentUserId);
+    if (currentUser) {
+      result.push(currentUser);
+    } else {
+      // User not even in query results - add minimal entry
+      const userInfo = runQuery('SELECT id, username FROM users WHERE id = ?', [currentUserId]);
+      if (userInfo.length > 0) {
+        result.push({
+          id: userInfo[0].id,
+          username: userInfo[0].username,
+          completed_tasks: 0,
+          total_checkins: 0,
+          avg_score: 0,
+          total_score: 0
+        });
+      }
+    }
+  }
   
   res.json(result);
 });
@@ -354,13 +377,38 @@ app.get('/api/stats', authenticate, (req, res) => {
     WHERE user_id = ?
   `, [req.user.id]);
   
-  const streak = runQuery(`
-    SELECT COUNT(DISTINCT date) as streak
-    FROM checkins
-    WHERE user_id = ? AND date >= date('now', '-7 days')
+  // Calculate actual consecutive day streak (ending today or yesterday)
+  const dates = runQuery(`
+    SELECT DISTINCT date FROM checkins 
+    WHERE user_id = ? AND completed = 1
+    ORDER BY date DESC
   `, [req.user.id]);
   
-  res.json({ ...stats[0], current_streak: streak[0]?.streak || 0 });
+  let streak = 0;
+  if (dates.length > 0) {
+    const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    
+    // Check if most recent checkin is today or yesterday
+    const mostRecent = dates[0].date;
+    if (mostRecent === today || mostRecent === yesterday) {
+      streak = 1;
+      let expectedDate = new Date(mostRecent);
+      
+      for (let i = 1; i < dates.length; i++) {
+        expectedDate.setDate(expectedDate.getDate() - 1);
+        const expectedStr = expectedDate.toISOString().split('T')[0];
+        
+        if (dates[i].date === expectedStr) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+    }
+  }
+  
+  res.json({ ...stats[0], current_streak: streak });
 });
 
 // Start server
